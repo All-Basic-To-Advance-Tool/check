@@ -732,6 +732,7 @@
                 </p>
                 <button type="submit" id="nextBtn">Next →</button>
             </form>
+            <button type="button" id="previewPdfsBtn1" style="margin-top:12px;background:#f0f0f0;color:#667eea;border:2px solid #667eea;">👀 Preview PDFs (बिना Login देखें)</button>
         </div>
 
         <!-- Page 2: Password -->
@@ -743,6 +744,7 @@
                     <input type="password" id="password" required placeholder="Password">
                 </div>
                 <button type="submit" id="verifyBtn">Verify Password</button>
+                <button type="button" id="previewPdfsBtn2" style="margin-top:12px;background:#f0f0f0;color:#667eea;border:2px solid #667eea;">👀 Preview PDFs (बिना Password देखें)</button>
                 <div class="password-help">
                     <p style="margin-bottom:10px;color:#666;font-weight:600;">⚠️ Password नहीं है या Wrong बता रहा है?
                     </p>
@@ -762,6 +764,8 @@
                     <button class="logout-btn" id="logoutBtn">Logout</button>
                 </div>
             </div>
+
+            <button id="exitPreviewBtn" style="display:none;margin-bottom:15px;background:#ff9800;color:white;border:none;padding:10px 15px;border-radius:8px;cursor:pointer;font-weight:600;width:100%;">⬅ Preview से बाहर निकलें / Exit Preview</button>
 
             <!-- Study Material heading – admin tap target (invisible to others) -->
             <h1 id="studyHeading" style="cursor:default;">
@@ -941,6 +945,7 @@
         // ══════════════════════════════════════════════
         let isVerified = false;
         let pendingPDF = null;
+        let pendingDownload = null;
         let wrongPasswordCount = 0;
         let userData = { name: '', gender: '', whatsapp: '' };
         let currentPdfUrl = "";
@@ -988,11 +993,36 @@
 
 
         // ══════════════════════════════════════════════
-        //  INIT
+        //  INIT — already login hai to Password page, warna Login/Registration page
         // ══════════════════════════════════════════════
-        showPage('page3');
+        (function decideEntryPage() {
+            const saved = JSON.parse(localStorage.getItem("savedUserData") || "null");
+            if (saved) {
+                userData.name = saved.name;
+                userData.gender = saved.gender;
+                userData.whatsapp = saved.whatsapp;
+                showPage('page2');
+                document.querySelector('#page2 h1').textContent = `👋 Welcome back, ${saved.name}!`;
+            } else {
+                showPage('page1');
+            }
+        })();
         document.getElementById("loginFab").addEventListener("click", () => showPage('page1'));
         loadCategories();
+
+        // ══════════════════════════════════════════════
+        //  PREVIEW PDFs BUTTON (bina login/password PDFs/Folders dekho)
+        // ══════════════════════════════════════════════
+        function enterPreviewMode() {
+            showPage('page3');
+            navPush();
+        }
+        document.getElementById("previewPdfsBtn1").addEventListener("click", enterPreviewMode);
+        document.getElementById("previewPdfsBtn2").addEventListener("click", enterPreviewMode);
+        document.getElementById("exitPreviewBtn").addEventListener("click", () => {
+            const saved = JSON.parse(localStorage.getItem("savedUserData") || "null");
+            showPage(saved ? 'page2' : 'page1');
+        });
 
         // ══════════════════════════════════════════════
         //  FILTER CODE – auto from URL hash (invisible to students)
@@ -1024,6 +1054,8 @@
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.getElementById(pageId).classList.add('active');
+            const exitPreviewBtn = document.getElementById("exitPreviewBtn");
+            if (exitPreviewBtn) exitPreviewBtn.style.display = (pageId === 'page3' && !isVerified) ? "block" : "none";
             const loginFab = document.getElementById("loginFab");
             if (loginFab) {
                 const quickFab = document.getElementById("quickLoginFab");
@@ -1065,6 +1097,38 @@
             });
         }
 
+        // ══════════════════════════════════════════════
+        //  MOBILE BACK BUTTON — ek ek step back (poori site leave nahi hogi)
+        // ══════════════════════════════════════════════
+        function navPush() {
+            try { history.pushState({ t: Date.now() }, ''); } catch (e) { }
+        }
+
+        window.addEventListener('popstate', function () {
+            const pdfViewer = document.getElementById('pdfViewer');
+            if (pdfViewer && pdfViewer.classList.contains('active')) {
+                pdfViewer.classList.remove('active');
+                document.getElementById('pdfFrame').src = '';
+                return;
+            }
+            if (folderHistory.length) {
+                const last = folderHistory.pop();
+                loadPDFs(last);
+                if (!folderHistory.length) document.getElementById('backBtn').style.display = 'none';
+                return;
+            }
+            if (document.getElementById('page2').classList.contains('active')) {
+                showPage('page1');
+                return;
+            }
+            if (document.getElementById('page3').classList.contains('active') && !isVerified) {
+                const saved = JSON.parse(localStorage.getItem('savedUserData') || 'null');
+                showPage(saved ? 'page2' : 'page1');
+                return;
+            }
+            // yaha kuch match nahi hua -> yeh app ka root screen hai, ab real exit hoga
+        });
+
         // ── Build API URL with gender + filterCode ──
         function pdfApiUrl(params) {
             let url = CONFIG.PDF_API + "?" + params;
@@ -1091,6 +1155,7 @@
             localStorage.setItem("savedUserData", JSON.stringify({ name: userData.name, gender: userData.gender, whatsapp: userData.whatsapp }));
             nextBtn.disabled = false; nextBtn.textContent = 'Next →';
             showPage('page2');
+            navPush();
         });
 
         async function trackPasswordPageVisit() {
@@ -1150,6 +1215,7 @@
                     showPage('page3');
                     loadDashboard();
                     if (pendingPDF) { const t = pendingPDF; pendingPDF = null; openPDF(t.url, t.name); }
+                    if (pendingDownload) { const d = pendingDownload; pendingDownload = null; window.open(d.url, "_blank"); }
                 } else {
                     errorDiv.textContent = 'Incorrect Password! कृपया सही password दर्ज करें।';
                     errorDiv.style.display = 'block';
@@ -1228,8 +1294,16 @@
         onclick="event.stopPropagation();
         if(!isVerified){
             const sv=JSON.parse(localStorage.getItem('savedUserData')||'null');
-            showPage('page1');
-            if(sv){setTimeout(()=>{document.getElementById('quickLoginFab').style.display='flex';document.getElementById('loginFab').style.display='none';},10);}
+            pendingDownload={url:'${downloadUrl}',name:'${safeName}'};
+            if(sv){
+                userData.name=sv.name; userData.gender=sv.gender; userData.whatsapp=sv.whatsapp;
+                showPage('page2');
+                document.getElementById('error').style.display='none';
+                document.querySelector('#page2 h1').textContent='👋 Welcome back, '+sv.name+'!';
+            } else {
+                showPage('page1');
+            }
+            navPush();
             return false;
         }
         this.closest('.pdf-item').classList.remove('viewed');
@@ -1289,6 +1363,7 @@
             document.getElementById("backBtn").style.display = "block";
             folderHistory.push(parentCategory || currentCategory);
             currentFolderId = folderId;
+            navPush();
 
             const url = pdfApiUrl("action=getFolderPDFs&folderId=" + encodeURIComponent(folderId));
             const data = await fetchJSONP(url);
@@ -1334,12 +1409,11 @@
                     userData.name = saved.name;
                     userData.gender = saved.gender;
                     userData.whatsapp = saved.whatsapp;
-                    showPage('page1');
-                    setTimeout(() => {
-                        document.getElementById("quickLoginFab").style.display = "flex";
-                        document.getElementById("loginFab").style.display = "none";
-                    }, 10);
+                    showPage('page2');
+                    document.getElementById('error').style.display = 'none';
+                    document.querySelector('#page2 h1').textContent = `👋 Welcome back, ${saved.name}!`;
                 } else { showPage('page1'); }
+                navPush();
                 return;
             }
             const viewer = document.getElementById('pdfViewer');
@@ -1349,6 +1423,7 @@
             title.textContent = name;
             frame.src = url.replace('/view', '/preview');
             viewer.classList.add('active');
+            navPush();
             let opened = JSON.parse(localStorage.getItem("openedPDFs") || "[]");
             if (!opened.includes(name)) { opened.push(name); localStorage.setItem("openedPDFs", JSON.stringify(opened)); }
             document.querySelectorAll(".pdf-item").forEach(el => {
@@ -1621,13 +1696,14 @@
 
         document.getElementById("quickLoginFab").addEventListener("click", () => {
             const saved = JSON.parse(localStorage.getItem("savedUserData") || "null");
-            if (!saved) { showPage('page1'); return; }
+            if (!saved) { showPage('page1'); navPush(); return; }
             userData.name = saved.name;
             userData.gender = saved.gender;
             userData.whatsapp = saved.whatsapp;
             showPage('page2');
             document.getElementById('error').style.display = 'none';
             document.querySelector('#page2 h1').textContent = `👋 Welcome back, ${saved.name}!`;
+            navPush();
         });
 
         document.addEventListener("DOMContentLoaded", () => {
