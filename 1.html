@@ -1086,13 +1086,35 @@
         const DEVICE_ID = getDeviceId();
         function getDeviceShortCode() { return DEVICE_ID.substring(0, Math.floor(DEVICE_ID.length * 0.5)); }
 
-        function fetchJSONP(url) {
+        function fetchJSONP(url, timeoutMs = 15000) {
             return new Promise((resolve, reject) => {
                 const cb = 'jsonp_' + Date.now() + '_' + Math.random().toString(36).slice(2);
                 const script = document.createElement('script');
-                window[cb] = function (data) { delete window[cb]; document.body.removeChild(script); resolve(data); };
+                let done = false;
+                const cleanup = () => {
+                    delete window[cb];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    clearTimeout(timer);
+                };
+                const timer = setTimeout(() => {
+                    if (done) return;
+                    done = true;
+                    cleanup();
+                    reject(new Error("Request timed out"));
+                }, timeoutMs);
+                window[cb] = function (data) {
+                    if (done) return;
+                    done = true;
+                    cleanup();
+                    resolve(data);
+                };
                 script.src = url + "&callback=" + cb;
-                script.onerror = () => reject(new Error("JSONP failed"));
+                script.onerror = () => {
+                    if (done) return;
+                    done = true;
+                    cleanup();
+                    reject(new Error("JSONP failed"));
+                };
                 document.body.appendChild(script);
             });
         }
@@ -1253,28 +1275,33 @@
         //  LOAD CATEGORIES
         // ══════════════════════════════════════════════
         async function loadCategories() {
-            const url = pdfApiUrl("action=getCategories");
-            const data = await fetchJSONP(url);
-            allCategoriesData = data.categories || [];
             const container = document.getElementById("categoriesContainer");
-            container.innerHTML = "";
-            allCategoriesData.forEach((cat, index) => {
-                const btn = document.createElement("div");
-                btn.className = "category-btn";
-                if (index === 0) { btn.classList.add("active"); currentCategory = cat.slug; }
-                btn.dataset.category = cat.slug;
-                btn.dataset.name = cat.name;
-                btn.innerHTML = "📚 " + cat.name.replace(/_/g, " ");
-                btn.addEventListener("click", () => {
-                    document.querySelectorAll(".category-btn").forEach(b => b.classList.remove("active"));
-                    btn.classList.add("active");
-                    currentCategory = cat.slug;
-                    exitSearchMode();
-                    loadPDFs(currentCategory);
+            container.innerHTML = `<div class="loading-categories">Loading...</div>`;
+            try {
+                const url = pdfApiUrl("action=getCategories");
+                const data = await fetchJSONP(url);
+                allCategoriesData = data.categories || [];
+                container.innerHTML = "";
+                allCategoriesData.forEach((cat, index) => {
+                    const btn = document.createElement("div");
+                    btn.className = "category-btn";
+                    if (index === 0) { btn.classList.add("active"); currentCategory = cat.slug; }
+                    btn.dataset.category = cat.slug;
+                    btn.dataset.name = cat.name;
+                    btn.innerHTML = "📚 " + cat.name.replace(/_/g, " ");
+                    btn.addEventListener("click", () => {
+                        document.querySelectorAll(".category-btn").forEach(b => b.classList.remove("active"));
+                        btn.classList.add("active");
+                        currentCategory = cat.slug;
+                        exitSearchMode();
+                        loadPDFs(currentCategory);
+                    });
+                    container.appendChild(btn);
                 });
-                container.appendChild(btn);
-            });
-            if (allCategoriesData.length) loadPDFs(allCategoriesData[0].slug);
+                if (allCategoriesData.length) loadPDFs(allCategoriesData[0].slug);
+            } catch (err) {
+                container.innerHTML = `<p style="text-align:center;color:#c33;">Loading failed. <a href="javascript:void(0)" onclick="loadCategories()" style="color:#0645AD;text-decoration:underline;">Tap to retry</a></p>`;
+            }
         }
 
         // ══════════════════════════════════════════════
